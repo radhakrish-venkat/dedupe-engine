@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture - Deduplication Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f8f9fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        .nav {
+            background: white;
+            padding: 15px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .nav ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+        
+        .nav a {
+            text-decoration: none;
+            color: #333;
+            font-weight: 500;
+            padding: 8px 12px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav a:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .section {
+            background: white;
+            margin: 30px 0;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            color: #667eea;
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .section h3 {
+            color: #333;
+            font-size: 1.3rem;
+            margin: 25px 0 15px 0;
+        }
+        
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 20px 0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+        
+        .architecture-diagram {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .component-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            margin: 15px 0;
+        }
+        
+        .component-card h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .flow-diagram {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        
+        .flow-step {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 150px;
+            margin: 10px;
+        }
+        
+        .arrow {
+            font-size: 1.5rem;
+            color: #667eea;
+            margin: 0 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .flow-diagram {
+                flex-direction: column;
+            }
+            
+            .arrow {
+                transform: rotate(90deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🏗️ Architecture</h1>
+            <p>Detailed architecture and design patterns of the Deduplication Engine</p>
+        </div>
+    </header>
+
+    <nav class="nav">
+        <div class="container">
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#components">Components</a></li>
+                <li><a href="#data-flow">Data Flow</a></li>
+                <li><a href="#patterns">Design Patterns</a></li>
+                <li><a href="#scalability">Scalability</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <section id="overview" class="section">
+            <h2>📋 Architecture Overview</h2>
+            <p>The Deduplication Engine follows a microservices architecture pattern with clear separation of concerns. Each service is responsible for a specific domain and communicates through well-defined APIs.</p>
+            
+            <div class="architecture-diagram">
+                <svg width="800" height="500" viewBox="0 0 800 500">
+                    <!-- Stream Handler -->
+                    <rect x="50" y="50" width="120" height="60" fill="#667eea" rx="8"/>
+                    <text x="110" y="80" text-anchor="middle" fill="white" font-weight="bold" font-size="12">Stream Handler</text>
+                    <text x="110" y="95" text-anchor="middle" fill="white" font-size="10">File Reading</text>
+                    <text x="110" y="105" text-anchor="middle" fill="white" font-size="10">gRPC Client</text>
+                    
+                    <!-- Arrow to Ingest -->
+                    <line x1="170" y1="80" x2="220" y2="80" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Ingest Node -->
+                    <rect x="220" y="50" width="120" height="60" fill="#764ba2" rx="8"/>
+                    <text x="280" y="80" text-anchor="middle" fill="white" font-weight="bold" font-size="12">Ingest Node</text>
+                    <text x="280" y="95" text-anchor="middle" fill="white" font-size="10">Chunking</text>
+                    <text x="280" y="105" text-anchor="middle" fill="white" font-size="10">Deduplication</text>
+                    
+                    <!-- Arrow to Storage -->
+                    <line x1="340" y1="80" x2="390" y2="80" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Data Storage Node -->
+                    <rect x="390" y="50" width="120" height="60" fill="#f093fb" rx="8"/>
+                    <text x="450" y="80" text-anchor="middle" fill="white" font-weight="bold" font-size="12">Data Storage</text>
+                    <text x="450" y="95" text-anchor="middle" fill="white" font-size="10">Metadata DB</text>
+                    <text x="450" y="105" text-anchor="middle" fill="white" font-size="10">Object Store</text>
+                    
+                    <!-- Cache Layer -->
+                    <rect x="220" y="150" width="120" height="40" fill="#48bb78" rx="8"/>
+                    <text x="280" y="175" text-anchor="middle" fill="white" font-weight="bold" font-size="12">LRU Cache</text>
+                    
+                    <!-- Arrow to Cache -->
+                    <line x1="280" y1="110" x2="280" y2="150" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- CockroachDB -->
+                    <rect x="50" y="250" width="200" height="50" fill="#48bb78" rx="8"/>
+                    <text x="150" y="275" text-anchor="middle" fill="white" font-weight="bold" font-size="12">CockroachDB</text>
+                    <text x="150" y="290" text-anchor="middle" fill="white" font-size="10">Metadata & Chunk Index</text>
+                    
+                    <!-- MinIO -->
+                    <rect x="300" y="250" width="200" height="50" fill="#ed8936" rx="8"/>
+                    <text x="400" y="275" text-anchor="middle" fill="white" font-weight="bold" font-size="12">MinIO</text>
+                    <text x="400" y="290" text-anchor="middle" fill="white" font-size="10">Chunk Storage & Object Store</text>
+                    
+                    <!-- Arrows to Storage -->
+                    <line x1="450" y1="110" x2="150" y2="250" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    <line x1="450" y1="110" x2="400" y2="250" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Arrow definitions -->
+                    <defs>
+                        <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                            <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+                        </marker>
+                    </defs>
+                </svg>
+            </div>
+        </section>
+
+        <section id="components" class="section">
+            <h2>🔧 Core Components</h2>
+            
+            <div class="component-card">
+                <h4>Stream Handler</h4>
+                <p><strong>Purpose:</strong> File reading and backup stream management</p>
+                <p><strong>Responsibilities:</strong></p>
+                <ul>
+                    <li>Read files in chunks and stream to Ingest Node</li>
+                    <li>Manage backup session lifecycle</li>
+                    <li>Handle gRPC client communication</li>
+                    <li>Provide progress feedback</li>
+                </ul>
+                <div class="code-block">
+// Key functionality
+func (s *StreamHandler) StreamBackup(stream pb.BackupService_StreamBackupServer) error {
+    // Handle bidirectional streaming
+    // Process file segments
+    // Manage backup state
+}
+                </div>
+            </div>
+            
+            <div class="component-card">
+                <h4>Ingest Node</h4>
+                <p><strong>Purpose:</strong> Core deduplication and chunking engine</p>
+                <p><strong>Responsibilities:</strong></p>
+                <ul>
+                    <li>Variable-block chunking with Blake3 hashing</li>
+                    <li>Duplicate detection using cache</li>
+                    <li>Coordinate with Data Storage Node</li>
+                    <li>Manage backup metadata</li>
+                </ul>
+                <div class="code-block">
+// Chunking process
+func (i *IngestNode) processChunk(data []byte) (*Chunk, error) {
+    // Content-defined chunking
+    // Blake3 hashing
+    // Cache lookup
+    // Storage coordination
+}
+                </div>
+            </div>
+            
+            <div class="component-card">
+                <h4>Data Storage Node</h4>
+                <p><strong>Purpose:</strong> Persistent storage and metadata management</p>
+                <p><strong>Responsibilities:</strong></p>
+                <ul>
+                    <li>Store chunks in MinIO object storage</li>
+                    <li>Manage metadata in CockroachDB</li>
+                    <li>Handle chunk retrieval requests</li>
+                    <li>Maintain data integrity</li>
+                </ul>
+                <div class="code-block">
+// Storage operations
+func (s *StorageNode) StoreChunk(ctx context.Context, req *pb.StoreChunkRequest) (*pb.StoreChunkResponse, error) {
+    // Store in MinIO
+    // Update metadata in CockroachDB
+    // Return storage location
+}
+                </div>
+            </div>
+            
+            <div class="component-card">
+                <h4>Cache Layer</h4>
+                <p><strong>Purpose:</strong> Fast duplicate detection</p>
+                <p><strong>Responsibilities:</strong></p>
+                <ul>
+                    <li>LRU cache for recent chunks</li>
+                    <li>Cuckoo filter for space-efficient lookup</li>
+                    <li>Reduce database queries</li>
+                    <li>Improve response times</li>
+                </ul>
+                <div class="code-block">
+// Cache operations
+func (c *Cache) CheckDuplicate(hash []byte) (bool, error) {
+    // LRU cache lookup
+    // Cuckoo filter check
+    // Return duplicate status
+}
+                </div>
+            </div>
+        </section>
+
+        <section id="data-flow" class="section">
+            <h2>🔄 Data Flow</h2>
+            
+            <div class="flow-diagram">
+                <div class="flow-step">
+                    <strong>1. File Read</strong><br>
+                    Stream Handler reads file in 64KB segments
+                </div>
+                <div class="arrow">→</div>
+                <div class="flow-step">
+                    <strong>2. Chunking</strong><br>
+                    Ingest Node applies variable-block chunking
+                </div>
+                <div class="arrow">→</div>
+                <div class="flow-step">
+                    <strong>3. Hashing</strong><br>
+                    Blake3 hash computed for each chunk
+                </div>
+                <div class="arrow">→</div>
+                <div class="flow-step">
+                    <strong>4. Cache Check</strong><br>
+                    LRU cache + Cuckoo filter lookup
+                </div>
+                <div class="arrow">→</div>
+                <div class="flow-step">
+                    <strong>5. Storage</strong><br>
+                    Store unique chunks in MinIO
+                </div>
+                <div class="arrow">→</div>
+                <div class="flow-step">
+                    <strong>6. Metadata</strong><br>
+                    Update CockroachDB with chunk info
+                </div>
+            </div>
+            
+            <h3>Detailed Flow</h3>
+            <ol>
+                <li><strong>File Reading:</strong> Stream Handler reads files in 64KB segments and streams them to the Ingest Node via gRPC</li>
+                <li><strong>Chunking:</strong> Ingest Node applies content-defined chunking using a rolling hash to identify chunk boundaries</li>
+                <li><strong>Hashing:</strong> Each chunk is hashed using Blake3 for fast, secure fingerprinting</li>
+                <li><strong>Cache Lookup:</strong> The hash is checked against the LRU cache and Cuckoo filter for duplicate detection</li>
+                <li><strong>Storage Decision:</strong> If the chunk is unique, it's sent to the Data Storage Node; otherwise, only metadata is updated</li>
+                <li><strong>Object Storage:</strong> Unique chunks are stored in MinIO with the hash as the key</li>
+                <li><strong>Metadata Update:</strong> Chunk information is stored in CockroachDB for future lookups</li>
+            </ol>
+        </section>
+
+        <section id="patterns" class="section">
+            <h2>🎯 Design Patterns</h2>
+            
+            <h3>Microservices Pattern</h3>
+            <p>Each service is independently deployable and has a single responsibility:</p>
+            <ul>
+                <li><strong>Stream Handler:</strong> File I/O and streaming</li>
+                <li><strong>Ingest Node:</strong> Business logic and deduplication</li>
+                <li><strong>Data Storage Node:</strong> Data persistence</li>
+            </ul>
+            
+            <h3>Repository Pattern</h3>
+            <p>Data access is abstracted through repository interfaces:</p>
+            <div class="code-block">
+type ChunkRepository interface {
+    Store(ctx context.Context, chunk *Chunk) error
+    Retrieve(ctx context.Context, hash []byte) (*Chunk, error)
+    Exists(ctx context.Context, hash []byte) (bool, error)
+}
+            </div>
+            
+            <h3>Factory Pattern</h3>
+            <p>Service creation is handled by factories for dependency injection:</p>
+            <div class="code-block">
+func NewIngestNode(config *Config) (*IngestNode, error) {
+    cache := cache.NewLRUCache(config.CacheSize)
+    chunker := chunking.NewChunker(config.ChunkSize)
+    storage := storage.NewClient(config.StorageConfig)
+    
+    return &IngestNode{
+        cache:   cache,
+        chunker: chunker,
+        storage: storage,
+    }, nil
+}
+            </div>
+            
+            <h3>Observer Pattern</h3>
+            <p>Progress updates are broadcast to multiple observers:</p>
+            <div class="code-block">
+type ProgressObserver interface {
+    OnProgress(processed, deduplicated int64)
+    OnComplete(summary *BackupSummary)
+    OnError(err error)
+}
+            </div>
+        </section>
+
+        <section id="scalability" class="section">
+            <h2>📈 Scalability Considerations</h2>
+            
+            <h3>Horizontal Scaling</h3>
+            <ul>
+                <li><strong>Multiple Ingest Nodes:</strong> Can handle multiple backup streams simultaneously</li>
+                <li><strong>Load Balancing:</strong> gRPC load balancer can distribute requests</li>
+                <li><strong>Database Sharding:</strong> CockroachDB supports automatic sharding</li>
+                <li><strong>Object Storage:</strong> MinIO can be distributed across multiple nodes</li>
+            </ul>
+            
+            <h3>Performance Optimizations</h3>
+            <ul>
+                <li><strong>Caching:</strong> LRU cache reduces database queries</li>
+                <li><strong>Batch Processing:</strong> Multiple chunks processed in batches</li>
+                <li><strong>Connection Pooling:</strong> Database connections are pooled</li>
+                <li><strong>Async Processing:</strong> Non-blocking I/O operations</li>
+            </ul>
+            
+            <h3>Resource Management</h3>
+            <ul>
+                <li><strong>Memory:</strong> Configurable cache sizes and chunk buffers</li>
+                <li><strong>CPU:</strong> Parallel chunking and hashing</li>
+                <li><strong>Network:</strong> Efficient gRPC streaming</li>
+                <li><strong>Storage:</strong> Compression and deduplication reduce space usage</li>
+            </ul>
+            
+            <h3>Monitoring and Observability</h3>
+            <ul>
+                <li><strong>Metrics:</strong> Prometheus metrics for performance monitoring</li>
+                <li><strong>Logging:</strong> Structured logging with correlation IDs</li>
+                <li><strong>Tracing:</strong> Distributed tracing for request flow</li>
+                <li><strong>Health Checks:</strong> Kubernetes-ready health endpoints</li>
+            </ul>
+        </section>
+    </div>
+
+    <footer style="background: #2d3748; color: white; text-align: center; padding: 20px; margin-top: 40px;">
+        <div class="container">
+            <p>Built with ❤️ using Go, Docker, and modern cloud technologies.</p>
+            <p><a href="https://github.com/radhakrish-venkat/dedupe-engine" style="color: #667eea;">View on GitHub</a></p>
+        </div>
+    </footer>
+</body>
+</html> 
