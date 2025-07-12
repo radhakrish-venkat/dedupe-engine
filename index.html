@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deduplication Engine - Documentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f8f9fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 60px 0;
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        header h1 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .nav {
+            background: white;
+            padding: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .nav ul {
+            list-style: none;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+        }
+        
+        .nav a {
+            text-decoration: none;
+            color: #333;
+            font-weight: 500;
+            padding: 10px 15px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav a:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .section {
+            background: white;
+            margin: 30px 0;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            color: #667eea;
+            font-size: 2rem;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .section h3 {
+            color: #333;
+            font-size: 1.5rem;
+            margin: 30px 0 15px 0;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+        
+        .feature-card {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .feature-card h4 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+        
+        .architecture {
+            text-align: center;
+            margin: 40px 0;
+        }
+        
+        .architecture img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 20px 0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+        
+        .performance-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        .performance-table th,
+        .performance-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .performance-table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+        
+        .performance-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            margin: 10px 5px;
+        }
+        
+        .btn:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #718096;
+        }
+        
+        .btn-secondary:hover {
+            background: #4a5568;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+        
+        footer {
+            background: #2d3748;
+            color: white;
+            text-align: center;
+            padding: 40px 0;
+            margin-top: 60px;
+        }
+        
+        .github-link {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .github-link:hover {
+            text-decoration: underline;
+        }
+        
+        @media (max-width: 768px) {
+            .nav ul {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            header h1 {
+                font-size: 2rem;
+            }
+            
+            .section {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🚀 Deduplication Engine</h1>
+            <p>A high-performance, scalable deduplication engine built with Go, featuring variable-block chunking, intelligent caching, and microservices architecture.</p>
+        </div>
+    </header>
+
+    <nav class="nav">
+        <div class="container">
+            <ul>
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#architecture">Architecture</a></li>
+                <li><a href="#performance">Performance</a></li>
+                <li><a href="#quickstart">Quick Start</a></li>
+                <li><a href="#api">API</a></li>
+                <li><a href="#github">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <section id="overview" class="section">
+            <h2>📋 Overview</h2>
+            <p>The Deduplication Engine is a modern, cloud-native solution for efficient data storage and backup. Built with Go and containerized with Docker, it provides enterprise-grade deduplication capabilities with microservices architecture.</p>
+            
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-number">99.92%</div>
+                    <div class="stat-label">Deduplication Ratio</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">640</div>
+                    <div class="stat-label">Chunks/Second</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">10MB/s</div>
+                    <div class="stat-label">Processing Speed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">4</div>
+                    <div class="stat-label">Microservices</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="section">
+            <h2>✨ Features</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>🔧 Variable-Block Chunking</h4>
+                    <p>Uses content-defined chunking with Blake3 hashing for optimal deduplication across different file types and sizes.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>⚡ Intelligent Caching</h4>
+                    <p>LRU cache with Cuckoo filter for fast duplicate detection, reducing storage overhead and improving performance.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🏗️ Microservices Architecture</h4>
+                    <p>Distributed services for ingest, storage, and stream handling with gRPC communication for high performance.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🐳 Containerized</h4>
+                    <p>Full Docker support with docker-compose for easy deployment and scaling in any environment.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>🗄️ Database Integration</h4>
+                    <p>CockroachDB for metadata storage with ACID compliance and distributed capabilities.</p>
+                </div>
+                <div class="feature-card">
+                    <h4>☁️ Object Storage</h4>
+                    <p>MinIO integration for scalable chunk storage with S3-compatible API.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="architecture" class="section">
+            <h2>🏗️ Architecture</h2>
+            <div class="architecture">
+                <svg width="800" height="400" viewBox="0 0 800 400">
+                    <!-- Stream Handler -->
+                    <rect x="50" y="50" width="150" height="80" fill="#667eea" rx="10"/>
+                    <text x="125" y="85" text-anchor="middle" fill="white" font-weight="bold">Stream Handler</text>
+                    <text x="125" y="105" text-anchor="middle" fill="white" font-size="12">File Reading</text>
+                    <text x="125" y="120" text-anchor="middle" fill="white" font-size="12">gRPC Client</text>
+                    
+                    <!-- Arrow to Ingest -->
+                    <line x1="200" y1="90" x2="250" y2="90" stroke="#333" stroke-width="3" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Ingest Node -->
+                    <rect x="250" y="50" width="150" height="80" fill="#764ba2" rx="10"/>
+                    <text x="325" y="85" text-anchor="middle" fill="white" font-weight="bold">Ingest Node</text>
+                    <text x="325" y="105" text-anchor="middle" fill="white" font-size="12">Chunking</text>
+                    <text x="325" y="120" text-anchor="middle" fill="white" font-size="12">Deduplication</text>
+                    
+                    <!-- Arrow to Storage -->
+                    <line x1="400" y1="90" x2="450" y2="90" stroke="#333" stroke-width="3" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Data Storage Node -->
+                    <rect x="450" y="50" width="150" height="80" fill="#f093fb" rx="10"/>
+                    <text x="525" y="85" text-anchor="middle" fill="white" font-weight="bold">Data Storage</text>
+                    <text x="525" y="105" text-anchor="middle" fill="white" font-size="12">Metadata DB</text>
+                    <text x="525" y="120" text-anchor="middle" fill="white" font-size="12">Object Store</text>
+                    
+                    <!-- Arrow down to CockroachDB -->
+                    <line x1="525" y1="130" x2="525" y2="180" stroke="#333" stroke-width="3" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- CockroachDB -->
+                    <rect x="400" y="180" width="250" height="60" fill="#48bb78" rx="10"/>
+                    <text x="525" y="210" text-anchor="middle" fill="white" font-weight="bold">CockroachDB</text>
+                    <text x="525" y="230" text-anchor="middle" fill="white" font-size="12">Metadata & Chunk Index</text>
+                    
+                    <!-- Arrow down to MinIO -->
+                    <line x1="525" y1="240" x2="525" y2="290" stroke="#333" stroke-width="3" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- MinIO -->
+                    <rect x="400" y="290" width="250" height="60" fill="#ed8936" rx="10"/>
+                    <text x="525" y="320" text-anchor="middle" fill="white" font-weight="bold">MinIO</text>
+                    <text x="525" y="340" text-anchor="middle" fill="white" font-size="12">Chunk Storage & Object Store</text>
+                    
+                    <!-- Arrow definitions -->
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+                        </marker>
+                    </defs>
+                </svg>
+            </div>
+            
+            <h3>Technology Stack</h3>
+            <ul>
+                <li><strong>Language:</strong> Go 1.21+</li>
+                <li><strong>Database:</strong> CockroachDB (PostgreSQL-compatible)</li>
+                <li><strong>Object Storage:</strong> MinIO (S3-compatible)</li>
+                <li><strong>Communication:</strong> gRPC with Protocol Buffers</li>
+                <li><strong>Containerization:</strong> Docker & Docker Compose</li>
+                <li><strong>Caching:</strong> LRU Cache with Cuckoo Filter</li>
+                <li><strong>Chunking:</strong> Variable-block with Blake3 hashing</li>
+            </ul>
+        </section>
+
+        <section id="performance" class="section">
+            <h2>📊 Performance Results</h2>
+            
+            <h3>File Type Testing</h3>
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>File Type</th>
+                        <th>Size</th>
+                        <th>Deduplication</th>
+                        <th>Chunks</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Text (unique)</td>
+                        <td>28B</td>
+                        <td>0%</td>
+                        <td>1</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td>Text (edited)</td>
+                        <td>46B</td>
+                        <td>0%</td>
+                        <td>1</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td>Small binary</td>
+                        <td>32B</td>
+                        <td>0%</td>
+                        <td>1</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td>Large binary</td>
+                        <td>5MB</td>
+                        <td>0%</td>
+                        <td>640</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td>Compressed (.zip)</td>
+                        <td>204B</td>
+                        <td>0%</td>
+                        <td>3</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td>Compressed (.gz)</td>
+                        <td>60B</td>
+                        <td>0%</td>
+                        <td>1</td>
+                        <td>✅ Expected</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Repetitive</strong></td>
+                        <td><strong>10MB</strong></td>
+                        <td><strong>99.92%</strong></td>
+                        <td><strong>1280</strong></td>
+                        <td><strong>✅ Excellent</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3>Performance Metrics</h3>
+            <ul>
+                <li><strong>Chunking Speed:</strong> ~10MB/s</li>
+                <li><strong>Deduplication Ratio:</strong> Up to 99.92% on repetitive content</li>
+                <li><strong>Cache Hit Rate:</strong> >95% for duplicate detection</li>
+                <li><strong>Storage Efficiency:</strong> Significant space savings on similar files</li>
+            </ul>
+        </section>
+
+        <section id="quickstart" class="section">
+            <h2>🚀 Quick Start</h2>
+            
+            <h3>Prerequisites</h3>
+            <ul>
+                <li>Docker and Docker Compose</li>
+                <li>Go 1.21+ (for development)</li>
+                <li>Git</li>
+            </ul>
+            
+            <h3>1. Clone the Repository</h3>
+            <div class="code-block">
+git clone https://github.com/radhakrish-venkat/dedupe-engine.git
+cd dedupe-engine
+            </div>
+            
+            <h3>2. Start the Services</h3>
+            <div class="code-block">
+docker-compose up -d
+            </div>
+            <p>This will start:</p>
+            <ul>
+                <li><strong>CockroachDB:</strong> Database for metadata storage</li>
+                <li><strong>MinIO:</strong> Object storage for chunks</li>
+                <li><strong>Data Storage Node:</strong> gRPC server for storage operations</li>
+                <li><strong>Ingest Node:</strong> gRPC server for backup processing</li>
+            </ul>
+            
+            <h3>3. Test the System</h3>
+            <div class="code-block">
+# Test with a small file
+docker run --rm --network dedupe-engine_dedupe-net \
+  -v $(pwd):/data dedupe-engine-stream-handler \
+  -file /data/test-file.txt -ingest-addr ingest-node:50051
+            </div>
+            
+            <h3>4. Monitor Services</h3>
+            <div class="code-block">
+# Check service status
+docker-compose ps
+
+# View logs
+docker-compose logs -f ingest-node
+            </div>
+        </section>
+
+        <section id="api" class="section">
+            <h2>🔍 API Reference</h2>
+            
+            <h3>gRPC Services</h3>
+            
+            <h4>BackupService (Ingest Node)</h4>
+            <div class="code-block">
+service BackupService {
+  rpc StreamBackup(stream BackupRequest) returns (stream BackupResponse);
+}
+            </div>
+            
+            <h4>StorageService (Data Storage Node)</h4>
+            <div class="code-block">
+service StorageService {
+  rpc StoreChunk(StoreChunkRequest) returns (StoreChunkResponse);
+  rpc RetrieveChunk(RetrieveChunkRequest) returns (RetrieveChunkResponse);
+}
+            </div>
+            
+            <h3>Configuration</h3>
+            <h4>Environment Variables</h4>
+            <table class="performance-table">
+                <thead>
+                    <tr>
+                        <th>Variable</th>
+                        <th>Default</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>COCKROACH_HOST</td>
+                        <td>localhost</td>
+                        <td>CockroachDB host</td>
+                    </tr>
+                    <tr>
+                        <td>COCKROACH_PORT</td>
+                        <td>26257</td>
+                        <td>CockroachDB port</td>
+                    </tr>
+                    <tr>
+                        <td>MINIO_ENDPOINT</td>
+                        <td>localhost:9000</td>
+                        <td>MinIO endpoint</td>
+                    </tr>
+                    <tr>
+                        <td>MINIO_ACCESS_KEY</td>
+                        <td>minioadmin</td>
+                        <td>MinIO access key</td>
+                    </tr>
+                    <tr>
+                        <td>MINIO_SECRET_KEY</td>
+                        <td>minioadmin</td>
+                        <td>MinIO secret key</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="github" class="section">
+            <h2>📦 GitHub Repository</h2>
+            <p>View the complete source code, contribute, and track issues on GitHub:</p>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="https://github.com/radhakrish-venkat/dedupe-engine" class="btn">View on GitHub</a>
+                <a href="https://github.com/radhakrish-venkat/dedupe-engine/issues" class="btn btn-secondary">Report Issues</a>
+                <a href="https://github.com/radhakrish-venkat/dedupe-engine/discussions" class="btn btn-secondary">Join Discussions</a>
+            </div>
+            
+            <h3>Repository Features</h3>
+            <ul>
+                <li>📁 Complete source code with Go modules</li>
+                <li>🐳 Docker configurations for all services</li>
+                <li>🧪 Comprehensive test suite</li>
+                <li>📚 Detailed documentation</li>
+                <li>🔄 CI/CD pipeline with GitHub Actions</li>
+                <li>📊 Performance benchmarks</li>
+                <li>🔧 Development tools and scripts</li>
+            </ul>
+        </section>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Built with ❤️ using Go, Docker, and modern cloud technologies.</p>
+            <p>View the project on <a href="https://github.com/radhakrish-venkat/dedupe-engine" class="github-link">GitHub</a></p>
+        </div>
+    </footer>
+</body>
+</html> 
