@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cockroachdb
+  namespace: dedupe-engine
+  labels:
+    app: cockroachdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cockroachdb
+  template:
+    metadata:
+      labels:
+        app: cockroachdb
+    spec:
+      containers:
+      - name: cockroachdb
+        image: cockroachdb/cockroach:latest-v23.2
+        ports:
+        - containerPort: 26257
+          name: grpc
+        - containerPort: 8080
+          name: http
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Start CockroachDB in single-node mode for development
+          cockroach start-single-node --insecure --listen-addr=0.0.0.0:26257 --http-addr=0.0.0.0:8080 --advertise-addr=cockroachdb.dedupe-engine.svc.cluster.local:26257
+        volumeMounts:
+        - name: cockroachdb-data
+          mountPath: /cockroach/cockroach-data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health?ready=1
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health?ready=1
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: cockroachdb-data
+        persistentVolumeClaim:
+          claimName: cockroachdb-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cockroachdb-data
+  namespace: dedupe-engine
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: minio-storage
+  resources:
+    requests:
+      storage: 5Gi 

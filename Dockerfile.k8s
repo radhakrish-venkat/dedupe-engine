@@ -1,0 +1,40 @@
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build all applications
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o data-storage-node ./cmd/data-storage-node
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ingest-node ./cmd/ingest-node
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o stream-handler ./cmd/stream-handler
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy binaries from builder
+COPY --from=builder /app/data-storage-node .
+COPY --from=builder /app/ingest-node .
+COPY --from=builder /app/stream-handler .
+
+# Create symlinks for easier access
+RUN ln -s /root/data-storage-node /usr/local/bin/data-storage-node
+RUN ln -s /root/ingest-node /usr/local/bin/ingest-node
+RUN ln -s /root/stream-handler /usr/local/bin/stream-handler
+
+EXPOSE 50051 50052
+
+CMD ["ingest-node"] 

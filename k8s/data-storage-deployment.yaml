@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-storage-node
+  namespace: dedupe-engine
+  labels:
+    app: data-storage-node
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-storage-node
+  template:
+    metadata:
+      labels:
+        app: data-storage-node
+    spec:
+      containers:
+      - name: data-storage-node
+        image: dedupe-engine:latest
+        imagePullPolicy: Never  # For local development
+        command: ["/usr/local/bin/data-storage-node"]
+        ports:
+        - containerPort: 50052
+          name: grpc
+        env:
+        - name: COCKROACH_HOST
+          value: "cockroachdb.dedupe-engine.svc.cluster.local"
+        - name: COCKROACH_PORT
+          value: "26257"
+        - name: MINIO_ENDPOINT
+          value: "minio.dedupe-engine.svc.cluster.local:9000"
+        - name: MINIO_ACCESS_KEY
+          value: "minioadmin"
+        - name: MINIO_SECRET_KEY
+          value: "minioadmin123"
+        - name: MINIO_USE_SSL
+          value: "false"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 50052
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 50052
+          initialDelaySeconds: 5
+          periodSeconds: 5 

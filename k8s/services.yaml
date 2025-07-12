@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-storage-node
+  namespace: dedupe-engine
+  labels:
+    app: data-storage-node
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50052
+    targetPort: 50052
+    protocol: TCP
+    name: grpc
+  selector:
+    app: data-storage-node
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest-node
+  namespace: dedupe-engine
+  labels:
+    app: ingest-node
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+    name: grpc
+  selector:
+    app: ingest-node 

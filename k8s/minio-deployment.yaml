@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: dedupe-engine
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_ROOT_USER
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_ROOT_PASSWORD
+        - name: MINIO_SERVER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_SERVER_URL
+        - name: MINIO_BROWSER_REDIRECT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_BROWSER_REDIRECT_URL
+        - name: MINIO_ERASURE_CODING_DRIVES
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_ERASURE_CODING_DRIVES
+        - name: MINIO_ERASURE_CODING_PARITY
+          valueFrom:
+            configMapKeyRef:
+              name: minio-config
+              key: MINIO_ERASURE_CODING_PARITY
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Create distributed MinIO setup with erasure coding
+          mkdir -p /data/minio-{0,1,2,3}
+          minio server /data/minio-{0,1,2,3} --console-address ":9001" --address ":9000"
+        volumeMounts:
+        - name: minio-data-0
+          mountPath: /data/minio-0
+        - name: minio-data-1
+          mountPath: /data/minio-1
+        - name: minio-data-2
+          mountPath: /data/minio-2
+        - name: minio-data-3
+          mountPath: /data/minio-3
+        - name: minio-cache
+          mountPath: /cache
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: minio-data-0
+        persistentVolumeClaim:
+          claimName: minio-data-0
+      - name: minio-data-1
+        persistentVolumeClaim:
+          claimName: minio-data-1
+      - name: minio-data-2
+        persistentVolumeClaim:
+          claimName: minio-data-2
+      - name: minio-data-3
+        persistentVolumeClaim:
+          claimName: minio-data-3
+      - name: minio-cache
+        emptyDir: {} 

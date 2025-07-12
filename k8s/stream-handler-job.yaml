@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stream-handler-test
+  namespace: dedupe-engine
+spec:
+  template:
+    spec:
+      containers:
+      - name: stream-handler
+        image: dedupe-engine:latest
+        imagePullPolicy: Never
+        command: ["/usr/local/bin/stream-handler"]
+        args: ["-file", "/data/test-file.txt", "-ingest-addr", "ingest-node.dedupe-engine.svc.cluster.local:50051"]
+        volumeMounts:
+        - name: test-data
+          mountPath: /data
+      volumes:
+      - name: test-data
+        configMap:
+          name: test-data
+      restartPolicy: Never
+  backoffLimit: 3
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-data
+  namespace: dedupe-engine
+data:
+  test-file.txt: |
+    This is a test file for the deduplication engine.
+    It contains some sample data to test the chunking and deduplication functionality.
+    The system should process this file and create chunks based on content-defined boundaries. 
