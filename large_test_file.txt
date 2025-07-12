@@ -1,0 +1,10 @@
+This is repeated content that should be deduplicated. Line 1 with the same text.
+This is repeated content that should be deduplicated. Line 2 with the same text.
+This is repeated content that should be deduplicated. Line 3 with the same text.
+This is repeated content that should be deduplicated. Line 4 with the same text.
+This is repeated content that should be deduplicated. Line 5 with the same text.
+This is repeated content that should be deduplicated. Line 6 with the same text.
+This is repeated content that should be deduplicated. Line 7 with the same text.
+This is repeated content that should be deduplicated. Line 8 with the same text.
+This is repeated content that should be deduplicated. Line 9 with the same text.
+This is repeated content that should be deduplicated. Line 10 with the same text.

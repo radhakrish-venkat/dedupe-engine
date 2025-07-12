@@ -1,0 +1,93 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest # GitHub-hosted runner, Linux environment
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22' # Specify your Go version, e.g., '1.22'
+
+    - name: Generate Protobuf Code
+      run: |
+        # Install protoc if not available on runner
+        sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        # Install Go gRPC plugins
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        export PATH=$PATH:$(go env GOPATH)/bin
+        # Generate Go code from proto definitions
+        protoc --go_out=./pkg/api --go_opt=paths=source_relative \
+               --go-grpc_out=./pkg/api --go-grpc_opt=paths=source_relative \
+               pkg/api/dedupe_engine.proto
+
+    - name: Build Ingest Node
+      run: |
+        cd cmd/ingest-node
+        go mod tidy
+        go build -v .
+
+    - name: Build Data Storage Node
+      run: |
+        cd cmd/data-storage-node
+        go mod tidy
+        go build -v .
+
+    - name: Build Stream Handler
+      run: |
+        cd cmd/stream-handler
+        go mod tidy
+        go build -v .
+
+    - name: Run Unit Tests
+      run: |
+        go test ./... -v # This will run tests across all internal and cmd packages
+
+    - name: Build Docker Images
+      run: |
+        docker build -t dedupe-engine/ingest-node:latest -f Dockerfile.ingest .
+        docker build -t dedupe-engine/data-storage-node:latest -f Dockerfile.data-storage .
+        docker build -t dedupe-engine/stream-handler:latest -f Dockerfile.stream-handler .
+
+    # Optional: Push Docker Images to GitHub Container Registry (GHCR)
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Push Docker Images to GHCR
+      run: |
+        docker tag dedupe-engine/ingest-node:latest ghcr.io/${{ github.repository_owner }}/dedupe-engine-ingest-node:latest
+        docker push ghcr.io/${{ github.repository_owner }}/dedupe-engine-ingest-node:latest
+
+        docker tag dedupe-engine/data-storage-node:latest ghcr.io/${{ github.repository_owner }}/dedupe-engine-data-storage-node:latest
+        docker push ghcr.io/${{ github.repository_owner }}/dedupe-engine-data-storage-node:latest
+
+        docker tag dedupe-engine/stream-handler:latest ghcr.io/${{ github.repository_owner }}/dedupe-engine-stream-handler:latest
+        docker push ghcr.io/${{ github.repository_owner }}/dedupe-engine-stream-handler:latest
+
+  # Optional: Deployment Job (e.g., to a Kubernetes cluster)
+  # deploy:
+  #   needs: build-and-test
+  #   runs-on: ubuntu-latest
+  #   environment: production # Define environments in GitHub for secrets management
+  #   steps:
+  #     - name: Deploy to Kubernetes
+  #         # Add your kubectl commands here to deploy your containers
+  #         # kubectl apply -f kubernetes-manifests/
+  #         echo "Deployment steps go here"

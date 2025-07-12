@@ -1,0 +1,104 @@
+services:
+  # Single CockroachDB for testing
+  cockroachdb:
+    image: cockroachdb/cockroach:latest-v23.2
+    container_name: cockroachdb
+    command: start-single-node --insecure
+    volumes:
+      - cockroachdb-data:/cockroach/cockroach-data
+    ports:
+      - "26257:26257" # Client port
+      - "8080:8080"  # Admin UI port
+    networks:
+      - dedupe-net
+    healthcheck:
+      test: ["CMD", "cockroach", "node", "status", "--insecure"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Single MinIO for testing
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    networks:
+      - dedupe-net
+    ports:
+      - "9000:9000" # MinIO API port
+      - "9001:9001" # MinIO Console port
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Data Storage Node
+  data-storage-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.data-storage
+    container_name: data-storage-node
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: dedupe-chunks
+    networks:
+      - dedupe-net
+    ports:
+      - "50052:50052" # gRPC port for Ingest Node
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # Ingest Node
+  ingest-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: ingest-node
+    environment:
+      COCKROACHDB_ADDR: cockroachdb:26257
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: dedupe-chunks
+    networks:
+      - dedupe-net
+    ports:
+      - "50051:50051" # gRPC port for Stream Handler
+    depends_on:
+      cockroachdb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # Stream Handler
+  stream-handler:
+    build:
+      context: .
+      dockerfile: Dockerfile.stream-handler
+    container_name: stream-handler
+    environment:
+      INGEST_NODE_ADDR: ingest-node:50051
+    networks:
+      - dedupe-net
+    depends_on:
+      ingest-node:
+        condition: service_started
+
+volumes:
+  cockroachdb-data:
+  minio-data:
+
+networks:
+  dedupe-net:
+    driver: bridge 

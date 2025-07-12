@@ -1,0 +1,206 @@
+services:
+  # CockroachDB Cluster (3 nodes)
+  cockroachdb-1:
+    image: cockroachdb/cockroach:latest-v23.2
+    container_name: cockroachdb-1
+    command: start --insecure --advertise-addr cockroachdb-1 --join cockroachdb-1,cockroachdb-2,cockroachdb-3
+    volumes:
+      - cockroachdb-data-1:/cockroach/cockroach-data
+    ports:
+      - "26257:26257" # Client port
+      - "8080:8080"  # Admin UI port
+    networks:
+      - dedupe-net
+    healthcheck:
+      test: ["CMD", "cockroach", "node", "status", "--insecure"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  cockroachdb-2:
+    image: cockroachdb/cockroach:latest-v23.2
+    container_name: cockroachdb-2
+    command: start --insecure --advertise-addr cockroachdb-2 --join cockroachdb-1,cockroachdb-2,cockroachdb-3
+    volumes:
+      - cockroachdb-data-2:/cockroach/cockroach-data
+    networks:
+      - dedupe-net
+    depends_on:
+      cockroachdb-1:
+        condition: service_healthy
+
+  cockroachdb-3:
+    image: cockroachdb/cockroach:latest-v23.2
+    container_name: cockroachdb-3
+    command: start --insecure --advertise-addr cockroachdb-3 --join cockroachdb-1,cockroachdb-2,cockroachdb-3
+    volumes:
+      - cockroachdb-data-3:/cockroach/cockroach-data
+    networks:
+      - dedupe-net
+    depends_on:
+      cockroachdb-2:
+        condition: service_healthy
+
+  # CockroachDB Initialization
+  cockroachdb-init:
+    image: cockroachdb/cockroach:latest-v23.2
+    container_name: cockroachdb-init
+    command: ["sh", "-c", "sleep 10 && cockroach init --insecure --host=cockroachdb-1:26257 && cockroach sql --insecure --host=cockroachdb-1:26257 --execute='CREATE DATABASE IF NOT EXISTS dedupe_engine;'"]
+    networks:
+      - dedupe-net
+    depends_on:
+      cockroachdb-3:
+        condition: service_healthy
+    restart: "no"
+
+  # MinIO Cluster (4 nodes)
+  minio-1:
+    image: minio/minio:latest
+    container_name: minio-1
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data-1:/data
+    networks:
+      - dedupe-net
+    ports:
+      - "9000:9000" # MinIO API port
+      - "9001:9001" # MinIO Console port
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio-2:
+    image: minio/minio:latest
+    container_name: minio-2
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data-2:/data
+    networks:
+      - dedupe-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      minio-1:
+        condition: service_healthy
+
+  minio-3:
+    image: minio/minio:latest
+    container_name: minio-3
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data-3:/data
+    networks:
+      - dedupe-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      minio-2:
+        condition: service_healthy
+
+  minio-4:
+    image: minio/minio:latest
+    container_name: minio-4
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data-4:/data
+    networks:
+      - dedupe-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      minio-3:
+        condition: service_healthy
+
+  # Your Custom Services
+  ingest-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: ingest-node
+    environment:
+      COCKROACHDB_ADDR: cockroachdb-1:26257 # Connect to one CRDB node
+      MINIO_ENDPOINT: minio-1:9000 # Connect to one MinIO node
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: dedupe-chunks
+    networks:
+      - dedupe-net
+    ports:
+      - "50051:50051" # gRPC port for Stream Handler
+    depends_on:
+      cockroachdb-init:
+        condition: service_completed_successfully
+      minio-1:
+        condition: service_healthy
+
+  data-storage-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.data-storage
+    container_name: data-storage-node
+    environment:
+      MINIO_ENDPOINT: minio-1:9000 # Connect to one MinIO node
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: dedupe-chunks
+    networks:
+      - dedupe-net
+    ports:
+      - "50052:50052" # gRPC port for Ingest Node
+    depends_on:
+      minio-1:
+        condition: service_healthy
+
+  stream-handler:
+    build:
+      context: .
+      dockerfile: Dockerfile.stream-handler
+    container_name: stream-handler
+    environment:
+      INGEST_NODE_ADDR: ingest-node:50051
+    networks:
+      - dedupe-net
+    depends_on:
+      ingest-node:
+        condition: service_started
+
+volumes:
+  cockroachdb-data-1:
+  cockroachdb-data-2:
+  cockroachdb-data-3:
+  minio-data-1:
+  minio-data-2:
+  minio-data-3:
+  minio-data-4:
+
+networks:
+  dedupe-net:
+    driver: bridge

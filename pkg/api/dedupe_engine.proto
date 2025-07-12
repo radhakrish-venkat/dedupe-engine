@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package dedupe_engine;
+
+option go_package = "github.com/radhakrishnan.venkat/dedupe-engine/pkg/api";
+
+// Defines the service for stream handler-to-ingest node communication
+service BackupService {
+  // Stream for initiating a backup and sending data chunks.
+  // Stream Handler sends BackupRequest messages and receives BackupResponse messages.
+  rpc StreamBackup(stream BackupRequest) returns (stream BackupResponse);
+
+  // RPC for initiating a restore operation.
+  rpc InitiateRestore(RestoreRequest) returns (RestoreResponse);
+
+  // RPC for streaming restored data back to the client/stream handler.
+  rpc StreamRestoreData(stream RestoreDataRequest) returns (stream RestoreDataResponse);
+}
+
+// --- Backup Related Messages ---
+
+// Initial message from stream handler to start a backup session
+message BackupStart {
+  string client_id = 1; // Identifier for the logical client/source
+  string backup_job_id = 2; // Unique ID for this backup job
+  string backup_policy_id = 3; // ID of the policy governing this backup
+  string encryption_key_id = 4; // Reference to encryption key used (if any)
+  int64 timestamp = 5; // Unix timestamp of backup start
+  string source_type = 6; // e.g., "filesystem", "database", "vm", "cloud_storage"
+  string source_details = 7; // JSON or specific format for source-specific config
+}
+
+// Message for sending file/data object metadata and data segments
+message FileSegment {
+  string file_path = 1; // Original full path of the file/object identifier
+  uint64 file_size = 2; // Total size of the file/object
+  bytes data = 3;       // Raw data segment of the file/object
+  uint64 offset = 4;    // Offset of this segment within the file/object
+  bool is_last_segment = 5; // True if this is the last segment for the file/object
+  string file_hash = 6; // Optional: Hash of the entire file/object (e.g., Blake3)
+}
+
+// Stream Handler sends a stream of these messages
+message BackupRequest {
+  oneof request_type {
+    BackupStart start_backup = 1;
+    FileSegment file_segment = 2;
+    BackupEnd end_backup = 3;
+  }
+}
+
+// Message from stream handler to signal end of backup session
+message BackupEnd {
+  string backup_job_id = 1;
+  string status = 2; // e.g., "COMPLETED", "FAILED"
+  string summary = 3; // Optional: summary message
+}
+
+// Server sends a stream of these messages back to the stream handler
+message BackupResponse {
+  oneof response_type {
+    BackupStatus status_update = 1;
+    BackupError error_message = 2;
+  }
+}
+
+// Status update from server to stream handler during backup
+message BackupStatus {
+  string backup_job_id = 1;
+  string current_file = 2;
+  uint64 bytes_processed = 3;
+  uint64 bytes_deduplicated = 4;
+  string message = 5;
+}
+
+// Error message from server to stream handler
+message BackupError {
+  string backup_job_id = 1;
+  string error_code = 2;
+  string error_message = 3;
+}
+
+// --- Restore Related Messages ---
+
+message RestoreRequest {
+  string client_id = 1;
+  string backup_job_id = 2; // The backup job to restore from
+  repeated string files_to_restore = 3; // List of specific files/paths to restore
+  string restore_destination_path = 4; // Path on client/source to restore to
+}
+
+message RestoreResponse {
+  string restore_job_id = 1; // Unique ID for the restore operation
+  string status = 2; // e.g., "INITIATED", "FAILED"
+  string message = 3;
+}
+
+message RestoreDataRequest {
+  string restore_job_id = 1;
+  // No specific data needed from stream handler during stream, it's mostly for flow control
+}
+
+message RestoreDataResponse {
+  string restore_job_id = 1;
+  string file_path = 2; // Original full path of the file/object
+  bytes data = 3;       // Raw data segment of the file/object
+  uint64 offset = 4;    // Offset of this segment within the file/object
+  bool is_last_segment = 5; // True if this is the last segment for the file/object
+}

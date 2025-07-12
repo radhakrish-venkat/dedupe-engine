@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package storage_service;
+
+option go_package = "github.com/radhakrishnan.venkat/dedupe-engine/pkg/api";
+
+service StorageService {
+  // Store a chunk in MinIO
+  rpc StoreChunk(StoreChunkRequest) returns (StoreChunkResponse);
+
+  // Retrieve a chunk from MinIO
+  rpc GetChunk(GetChunkRequest) returns (GetChunkResponse);
+}
+
+message StoreChunkRequest {
+  string fingerprint = 1; // Blake3 hash, used as object key
+  bytes chunk_data = 2;
+  int64 size = 3;
+}
+
+message StoreChunkResponse {
+  string storage_location = 1; // MinIO object key
+  string storage_node_id = 2;
+  bool success = 3;
+  string error_message = 4;
+}
+
+message GetChunkRequest {
+  string fingerprint = 1;
+}
+
+message GetChunkResponse {
+  bytes chunk_data = 1;
+  int64 size = 2;
+  bool found = 3;
+  string error_message = 4;
+} 
