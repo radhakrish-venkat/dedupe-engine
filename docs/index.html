@@ -511,6 +511,52 @@ docker-compose logs -f ingest-node
             </div>
         </section>
 
+        <section id="kubernetes" class="section">
+            <h2>☸️ Kubernetes Deployment</h2>
+            <h3>Prerequisites</h3>
+            <ul>
+                <li><strong>kind</strong> (Kubernetes IN Docker) cluster running</li>
+                <li><strong>kubectl</strong> installed and configured</li>
+                <li><strong>Docker</strong> (for building and loading images)</li>
+                <li><strong>local-path provisioner</strong> (for dynamic PVC provisioning)</li>
+            </ul>
+            <h3>1. Build and Load Images</h3>
+            <div class="code-block">
+# Build all images (from project root)
+docker build -f Dockerfile.data-storage -t dedupe-engine-data-storage-node:latest .
+docker build -f Dockerfile.ingest -t dedupe-engine-ingest-node:latest .
+docker build -f Dockerfile.stream-handler -t dedupe-engine-stream-handler:latest .
+# Load images into kind cluster (replace 'desktop' with your cluster name if different)
+kind load docker-image dedupe-engine-data-storage-node:latest --name desktop
+kind load docker-image dedupe-engine-ingest-node:latest --name desktop
+kind load docker-image dedupe-engine-stream-handler:latest --name desktop
+            </div>
+            <h3>2. Deploy to Kubernetes</h3>
+            <div class="code-block">
+cd k8s
+./deploy-no-build.sh
+            </div>
+            <h3>3. Test the Deployment</h3>
+            <div class="code-block">
+kubectl apply -f stream-handler-job.yaml
+# Check job status
+kubectl get pods -n dedupe-engine
+# View job logs
+kubectl logs job/stream-handler-test -n dedupe-engine
+            </div>
+            <h3>Troubleshooting</h3>
+            <ul>
+                <li><strong>PVCs Pending:</strong> Ensure the local-path provisioner is running: <code>kubectl get pods -n local-path-storage</code></li>
+                <li><strong>MinIO config errors:</strong> The deployment now uses explicit env vars; ensure <code>minio-deployment.yaml</code> is up to date.</li>
+                <li><strong>Images not found:</strong> Always <code>kind load docker-image ...</code> after building images.</li>
+            </ul>
+            <h3>Cleanup</h3>
+            <div class="code-block">
+# Remove all resources and namespace
+./cleanup.sh
+            </div>
+        </section>
+
         <section id="api" class="section">
             <h2>🔍 API Reference</h2>
             
