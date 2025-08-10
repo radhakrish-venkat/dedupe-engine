@@ -111,75 +111,31 @@ func (c *LRUCache) Clear() {
 }
 
 // SimpleCuckooFilter implements a basic Cuckoo filter for fast fingerprint lookups
+// DEPRECATED: Use CuckooFilter instead for proper implementation
 type SimpleCuckooFilter struct {
-	buckets    []uint64
-	bucketSize int
-	numBuckets int
-	mutex      sync.RWMutex
+	*CuckooFilter // Embed the proper implementation
 }
 
-// NewSimpleCuckooFilter creates a new Cuckoo filter
+// NewSimpleCuckooFilter creates a new Cuckoo filter (now uses proper implementation)
 func NewSimpleCuckooFilter(capacity int) *SimpleCuckooFilter {
-	bucketSize := 4 // 4 fingerprints per bucket
-	numBuckets := capacity / bucketSize
-	if numBuckets < 1 {
-		numBuckets = 1
-	}
-
-	return &SimpleCuckooFilter{
-		buckets:    make([]uint64, numBuckets),
-		bucketSize: bucketSize,
-		numBuckets: numBuckets,
-	}
+	// Use 0.01 false positive rate for good accuracy
+	cf := NewCuckooFilter(capacity, 0.01)
+	return &SimpleCuckooFilter{CuckooFilter: cf}
 }
 
 // Add adds a fingerprint to the filter
 func (cf *SimpleCuckooFilter) Add(fingerprint string) bool {
-	cf.mutex.Lock()
-	defer cf.mutex.Unlock()
-
-	hash := cf.hashFingerprint(fingerprint)
-	bucketIndex := hash % uint64(cf.numBuckets)
-
-	// Simple implementation - just store the hash
-	// In a real Cuckoo filter, you'd handle collisions more sophisticatedly
-	cf.buckets[bucketIndex] = hash
-	return true
+	return cf.CuckooFilter.Add(fingerprint)
 }
 
 // Contains checks if a fingerprint might be in the filter
 func (cf *SimpleCuckooFilter) Contains(fingerprint string) bool {
-	cf.mutex.RLock()
-	defer cf.mutex.RUnlock()
-
-	hash := cf.hashFingerprint(fingerprint)
-	bucketIndex := hash % uint64(cf.numBuckets)
-
-	return cf.buckets[bucketIndex] == hash
+	return cf.CuckooFilter.Contains(fingerprint)
 }
 
 // Remove removes a fingerprint from the filter
 func (cf *SimpleCuckooFilter) Remove(fingerprint string) bool {
-	cf.mutex.Lock()
-	defer cf.mutex.Unlock()
-
-	hash := cf.hashFingerprint(fingerprint)
-	bucketIndex := hash % uint64(cf.numBuckets)
-
-	if cf.buckets[bucketIndex] == hash {
-		cf.buckets[bucketIndex] = 0
-		return true
-	}
-	return false
-}
-
-// hashFingerprint creates a simple hash from a fingerprint string
-func (cf *SimpleCuckooFilter) hashFingerprint(fingerprint string) uint64 {
-	var hash uint64
-	for i, char := range fingerprint {
-		hash += uint64(char) * uint64(i+1)
-	}
-	return hash
+	return cf.CuckooFilter.Remove(fingerprint)
 }
 
 // DeduplicationCache combines LRU cache and Cuckoo filter for efficient deduplication
