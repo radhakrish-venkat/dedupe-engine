@@ -2,160 +2,403 @@ package cache
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"math"
+	"sort"
 	"sync"
 	"time"
+
+	"github.com/radhakrishnan.venkat/dedupe-engine/internal/db"
 )
 
-// IntelligentCache provides predictive cache warming and optimization
+// IntelligentCache implements predictive cache warming
 type IntelligentCache struct {
-	// Core cache
+	// Core cache components
 	dedupeCache *DeduplicationCache
+	dbClient    DBClient
 
 	// Predictive components
 	accessPatterns *AccessPatternAnalyzer
-	warmingEngine  *CacheWarmingEngine
-	stats          *IntelligentCacheStats
+	predictor      *ChunkPredictor
+	warmingQueue   *WarmingQueue
 
 	// Configuration
 	config *IntelligentCacheConfig
 
-	// Synchronization
-	mutex sync.RWMutex
+	// Statistics
+	stats      *IntelligentCacheStats
+	statsMutex sync.RWMutex
+
+	// Context for background operations
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-// IntelligentCacheConfig holds configuration for intelligent caching
+// IntelligentCacheConfig holds configuration for intelligent cache
 type IntelligentCacheConfig struct {
-	EnablePredictiveWarming bool
-	WarmingThreshold        float64 // Hit rate threshold to trigger warming
-	WarmingBatchSize        int     // Number of chunks to warm at once
-	PatternAnalysisWindow   time.Duration
-	MaxWarmingWorkers       int
+	// Warming settings
+	WarmingEnabled   bool
+	WarmingThreshold float64 // Minimum confidence for warming
+	MaxWarmingChunks int
+	WarmingLookback  time.Duration
+	WarmingInterval  time.Duration
+
+	// Prediction settings
+	PredictionWindow    time.Duration
+	MinAccessCount      int
+	ConfidenceThreshold float64
+
+	// Performance settings
+	MaxConcurrentWarming int
+	WarmingTimeout       time.Duration
 }
 
 // IntelligentCacheStats tracks intelligent cache performance
 type IntelligentCacheStats struct {
-	PredictiveHits    int64
-	WarmingOperations int64
-	WarmedChunks      int64
-	PatternAccuracy   float64
-	LastWarmingTime   time.Time
+	TotalAccesses      int64
+	CacheHits          int64
+	CacheMisses        int64
+	WarmingPredictions int64
+	WarmingHits        int64
+	WarmingMisses      int64
+	PredictionAccuracy float64
+	LastReset          time.Time
 }
 
-// AccessPatternAnalyzer analyzes access patterns to predict future accesses
+// AccessPatternAnalyzer analyzes access patterns
 type AccessPatternAnalyzer struct {
 	patterns map[string]*AccessPattern
 	mutex    sync.RWMutex
-	window   time.Duration
+	config   *IntelligentCacheConfig
 }
 
 // AccessPattern represents a chunk access pattern
 type AccessPattern struct {
 	Fingerprint    string
-	AccessCount    int64
+	AccessCount    int
 	LastAccess     time.Time
-	NextPrediction time.Time
-	Confidence     float64
+	AccessTimes    []time.Time
+	RelatedChunks  map[string]float64 // fingerprint -> correlation score
+	Frequency      float64
+	Predictability float64
 }
 
-// CacheWarmingEngine handles predictive cache warming
-type CacheWarmingEngine struct {
-	workerPool chan struct{}
-	patterns   *AccessPatternAnalyzer
-	config     *IntelligentCacheConfig
+// ChunkPredictor predicts which chunks will be accessed
+type ChunkPredictor struct {
+	patterns    *AccessPatternAnalyzer
+	config      *IntelligentCacheConfig
+	predictions map[string]*Prediction
+	mutex       sync.RWMutex
+}
+
+// Prediction represents a chunk access prediction
+type Prediction struct {
+	Fingerprint string
+	Confidence  float64
+	Reason      string
+	Timestamp   time.Time
+	ExpiresAt   time.Time
+}
+
+// WarmingQueue manages cache warming operations
+type WarmingQueue struct {
+	items    []WarmingItem
+	mutex    sync.Mutex
+	capacity int
+}
+
+// WarmingItem represents a cache warming operation
+type WarmingItem struct {
+	Fingerprint string
+	Priority    float64
+	Timestamp   time.Time
+	Reason      string
+}
+
+// DBClient interface for database operations
+type DBClient interface {
+	GetChunkMetadataByFingerprint(ctx context.Context, fingerprint string) (*db.ChunkMetadata, error)
+	InsertChunkMetadata(ctx context.Context, metadata *db.ChunkMetadata) error
 }
 
 // NewIntelligentCache creates a new intelligent cache
-func NewIntelligentCache(cacheCapacity, filterCapacity int, config *IntelligentCacheConfig) *IntelligentCache {
+func NewIntelligentCache(dedupeCache *DeduplicationCache, dbClient DBClient, config *IntelligentCacheConfig) *IntelligentCache {
 	if config == nil {
 		config = &IntelligentCacheConfig{
-			EnablePredictiveWarming: true,
-			WarmingThreshold:        0.7, // 70% hit rate threshold
-			WarmingBatchSize:        100,
-			PatternAnalysisWindow:   1 * time.Hour,
-			MaxWarmingWorkers:       2,
+			WarmingEnabled:       true,
+			WarmingThreshold:     0.7,
+			MaxWarmingChunks:     100,
+			WarmingLookback:      1 * time.Hour,
+			WarmingInterval:      30 * time.Second,
+			PredictionWindow:     5 * time.Minute,
+			MinAccessCount:       3,
+			ConfidenceThreshold:  0.6,
+			MaxConcurrentWarming: 4,
+			WarmingTimeout:       10 * time.Second,
 		}
 	}
 
-	return &IntelligentCache{
-		dedupeCache: NewDeduplicationCache(cacheCapacity, filterCapacity),
-		accessPatterns: &AccessPatternAnalyzer{
-			patterns: make(map[string]*AccessPattern),
-			window:   config.PatternAnalysisWindow,
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ic := &IntelligentCache{
+		dedupeCache: dedupeCache,
+		dbClient:    dbClient,
+		config:      config,
+		stats: &IntelligentCacheStats{
+			LastReset: time.Now(),
 		},
-		warmingEngine: &CacheWarmingEngine{
-			workerPool: make(chan struct{}, config.MaxWarmingWorkers),
-			config:     config,
-		},
-		stats:  &IntelligentCacheStats{},
-		config: config,
+		ctx:    ctx,
+		cancel: cancel,
 	}
+
+	// Initialize components
+	ic.accessPatterns = NewAccessPatternAnalyzer(config)
+	ic.predictor = NewChunkPredictor(ic.accessPatterns, config)
+	ic.warmingQueue = NewWarmingQueue(config.MaxWarmingChunks)
+
+	// Start background processes
+	ic.startBackgroundProcesses()
+
+	return ic
 }
 
-// GetChunkMetadata retrieves chunk metadata with intelligent optimization
-func (ic *IntelligentCache) GetChunkMetadata(fingerprint string) (*ChunkMetadata, bool) {
-	// Record access pattern
-	ic.accessPatterns.recordAccess(fingerprint)
+// Close closes the intelligent cache
+func (ic *IntelligentCache) Close() {
+	ic.cancel()
+}
 
-	// Try to get from cache
+// GetChunkMetadata gets chunk metadata with intelligent warming
+func (ic *IntelligentCache) GetChunkMetadata(fingerprint string) (*ChunkMetadata, bool) {
+	ic.statsMutex.Lock()
+	ic.stats.TotalAccesses++
+	ic.statsMutex.Unlock()
+
+	// Record access pattern
+	ic.accessPatterns.RecordAccess(fingerprint)
+
+	// Try to get from cache first
 	metadata, exists := ic.dedupeCache.GetChunkMetadata(fingerprint)
 	if exists {
-		ic.stats.PredictiveHits++
+		ic.statsMutex.Lock()
+		ic.stats.CacheHits++
+		ic.statsMutex.Unlock()
 		return metadata, true
 	}
 
-	// Check if we should trigger warming
-	if ic.config.EnablePredictiveWarming {
-		ic.checkAndTriggerWarming()
+	ic.statsMutex.Lock()
+	ic.stats.CacheMisses++
+	ic.statsMutex.Unlock()
+
+	// Try to get from database
+	if ic.dbClient != nil {
+		ctx, cancel := context.WithTimeout(ic.ctx, ic.config.WarmingTimeout)
+		defer cancel()
+
+		dbMetadata, err := ic.dbClient.GetChunkMetadataByFingerprint(ctx, fingerprint)
+		if err == nil && dbMetadata != nil {
+			// Convert db.ChunkMetadata to cache.ChunkMetadata
+			cacheMetadata := &ChunkMetadata{
+				Fingerprint:        dbMetadata.Fingerprint,
+				StorageLocation:    dbMetadata.StorageLocation,
+				Size:               int64(dbMetadata.Size),
+				CreationTime:       dbMetadata.CreationTime,
+				LastReferencedTime: dbMetadata.LastReferencedTime,
+			}
+			// Add to cache
+			ic.dedupeCache.PutChunkMetadata(fingerprint, cacheMetadata)
+			return cacheMetadata, true
+		}
 	}
+
+	// Trigger predictive warming for related chunks
+	go ic.triggerPredictiveWarming(fingerprint)
 
 	return nil, false
 }
 
-// PutChunkMetadata stores chunk metadata
-func (ic *IntelligentCache) PutChunkMetadata(fingerprint string, metadata *ChunkMetadata) {
+// AddChunkMetadata adds chunk metadata to cache
+func (ic *IntelligentCache) AddChunkMetadata(fingerprint string, metadata *ChunkMetadata) {
 	ic.dedupeCache.PutChunkMetadata(fingerprint, metadata)
 }
 
-// WarmCachePredictively warms the cache based on access patterns
-func (ic *IntelligentCache) WarmCachePredictively(ctx context.Context, localStore interface{}, centralDB interface{}) {
-	if !ic.config.EnablePredictiveWarming {
+// triggerPredictiveWarming triggers warming for related chunks
+func (ic *IntelligentCache) triggerPredictiveWarming(accessedFingerprint string) {
+	if !ic.config.WarmingEnabled {
 		return
 	}
 
-	// Get predicted chunks
-	predictions := ic.accessPatterns.getPredictions()
-	if len(predictions) == 0 {
+	// Get predictions for related chunks
+	predictions := ic.predictor.PredictRelatedChunks(accessedFingerprint)
+
+	// Add high-confidence predictions to warming queue
+	for _, prediction := range predictions {
+		if prediction.Confidence >= ic.config.WarmingThreshold {
+			ic.warmingQueue.Add(WarmingItem{
+				Fingerprint: prediction.Fingerprint,
+				Priority:    prediction.Confidence,
+				Timestamp:   time.Now(),
+				Reason:      prediction.Reason,
+			})
+		}
+	}
+}
+
+// startBackgroundProcesses starts background warming and analysis
+func (ic *IntelligentCache) startBackgroundProcesses() {
+	// Start warming worker
+	go ic.warmingWorker()
+
+	// Start pattern analysis worker
+	go ic.patternAnalysisWorker()
+
+	// Start prediction worker
+	go ic.predictionWorker()
+}
+
+// warmingWorker processes cache warming operations
+func (ic *IntelligentCache) warmingWorker() {
+	ticker := time.NewTicker(ic.config.WarmingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ic.ctx.Done():
+			return
+		case <-ticker.C:
+			ic.processWarmingQueue()
+		}
+	}
+}
+
+// processWarmingQueue processes items in the warming queue
+func (ic *IntelligentCache) processWarmingQueue() {
+	items := ic.warmingQueue.GetItems()
+	if len(items) == 0 {
 		return
 	}
 
-	// Start warming in background
-	go func() {
-		ic.warmingEngine.warmChunks(ctx, predictions, localStore, centralDB, ic.dedupeCache)
-	}()
-}
+	// Sort by priority
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Priority > items[j].Priority
+	})
 
-// checkAndTriggerWarming checks if warming should be triggered
-func (ic *IntelligentCache) checkAndTriggerWarming() {
-	ic.mutex.Lock()
-	defer ic.mutex.Unlock()
+	// Process top items
+	processed := 0
+	for _, item := range items {
+		if processed >= ic.config.MaxConcurrentWarming {
+			break
+		}
 
-	// Calculate current hit rate
-	totalRequests := ic.stats.PredictiveHits + 1 // +1 for current request
-	hitRate := float64(ic.stats.PredictiveHits) / float64(totalRequests)
+		// Check if already in cache
+		if _, exists := ic.dedupeCache.GetChunkMetadata(item.Fingerprint); exists {
+			continue
+		}
 
-	// Trigger warming if hit rate is below threshold
-	if hitRate < ic.config.WarmingThreshold {
-		ic.stats.WarmingOperations++
-		ic.stats.LastWarmingTime = time.Now()
-
-		// This would trigger warming in a real implementation
-		log.Printf("Triggering cache warming due to low hit rate: %.2f%%", hitRate*100)
+		// Try to warm from database
+		if ic.warmChunk(item.Fingerprint) {
+			processed++
+		}
 	}
 }
 
-// recordAccess records a chunk access for pattern analysis
-func (apa *AccessPatternAnalyzer) recordAccess(fingerprint string) {
+// warmChunk warms a chunk from the database
+func (ic *IntelligentCache) warmChunk(fingerprint string) bool {
+	if ic.dbClient == nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(ic.ctx, ic.config.WarmingTimeout)
+	defer cancel()
+
+	dbMetadata, err := ic.dbClient.GetChunkMetadataByFingerprint(ctx, fingerprint)
+	if err != nil || dbMetadata == nil {
+		return false
+	}
+
+	// Convert db.ChunkMetadata to cache.ChunkMetadata
+	cacheMetadata := &ChunkMetadata{
+		Fingerprint:        dbMetadata.Fingerprint,
+		StorageLocation:    dbMetadata.StorageLocation,
+		Size:               int64(dbMetadata.Size),
+		CreationTime:       dbMetadata.CreationTime,
+		LastReferencedTime: dbMetadata.LastReferencedTime,
+	}
+
+	// Add to cache
+	ic.dedupeCache.PutChunkMetadata(fingerprint, cacheMetadata)
+
+	ic.statsMutex.Lock()
+	ic.stats.WarmingPredictions++
+	ic.statsMutex.Unlock()
+
+	return true
+}
+
+// patternAnalysisWorker analyzes access patterns
+func (ic *IntelligentCache) patternAnalysisWorker() {
+	ticker := time.NewTicker(ic.config.WarmingInterval * 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ic.ctx.Done():
+			return
+		case <-ticker.C:
+			ic.accessPatterns.AnalyzePatterns()
+		}
+	}
+}
+
+// predictionWorker updates predictions
+func (ic *IntelligentCache) predictionWorker() {
+	ticker := time.NewTicker(ic.config.WarmingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ic.ctx.Done():
+			return
+		case <-ticker.C:
+			ic.predictor.UpdatePredictions()
+		}
+	}
+}
+
+// GetStats returns intelligent cache statistics
+func (ic *IntelligentCache) GetStats() *IntelligentCacheStats {
+	ic.statsMutex.RLock()
+	defer ic.statsMutex.RUnlock()
+
+	stats := *ic.stats // Copy to avoid race conditions
+
+	// Calculate hit rate
+	if stats.TotalAccesses > 0 {
+		stats.PredictionAccuracy = float64(stats.CacheHits) / float64(stats.TotalAccesses)
+	}
+
+	return &stats
+}
+
+// ResetStats resets intelligent cache statistics
+func (ic *IntelligentCache) ResetStats() {
+	ic.statsMutex.Lock()
+	defer ic.statsMutex.Unlock()
+
+	ic.stats = &IntelligentCacheStats{
+		LastReset: time.Now(),
+	}
+}
+
+// NewAccessPatternAnalyzer creates a new access pattern analyzer
+func NewAccessPatternAnalyzer(config *IntelligentCacheConfig) *AccessPatternAnalyzer {
+	return &AccessPatternAnalyzer{
+		patterns: make(map[string]*AccessPattern),
+		config:   config,
+	}
+}
+
+// RecordAccess records a chunk access
+func (apa *AccessPatternAnalyzer) RecordAccess(fingerprint string) {
 	apa.mutex.Lock()
 	defer apa.mutex.Unlock()
 
@@ -164,139 +407,265 @@ func (apa *AccessPatternAnalyzer) recordAccess(fingerprint string) {
 
 	if !exists {
 		pattern = &AccessPattern{
-			Fingerprint: fingerprint,
-			AccessCount: 0,
-			LastAccess:  now,
+			Fingerprint:   fingerprint,
+			RelatedChunks: make(map[string]float64),
 		}
 		apa.patterns[fingerprint] = pattern
 	}
 
 	pattern.AccessCount++
 	pattern.LastAccess = now
+	pattern.AccessTimes = append(pattern.AccessTimes, now)
 
-	// Update prediction based on access frequency
-	apa.updatePrediction(pattern)
-}
-
-// updatePrediction updates the prediction for a chunk
-func (apa *AccessPatternAnalyzer) updatePrediction(pattern *AccessPattern) {
-	// Simple prediction: if accessed frequently, predict next access soon
-	if pattern.AccessCount > 5 {
-		// High frequency access - predict next access within 5 minutes
-		pattern.NextPrediction = time.Now().Add(5 * time.Minute)
-		pattern.Confidence = 0.8
-	} else if pattern.AccessCount > 2 {
-		// Medium frequency access - predict next access within 15 minutes
-		pattern.NextPrediction = time.Now().Add(15 * time.Minute)
-		pattern.Confidence = 0.6
-	} else {
-		// Low frequency access - predict next access within 1 hour
-		pattern.NextPrediction = time.Now().Add(1 * time.Hour)
-		pattern.Confidence = 0.3
-	}
-}
-
-// getPredictions returns chunks that should be warmed
-func (apa *AccessPatternAnalyzer) getPredictions() []string {
-	apa.mutex.RLock()
-	defer apa.mutex.RUnlock()
-
-	var predictions []string
-	now := time.Now()
-
-	for fingerprint, pattern := range apa.patterns {
-		// Check if chunk should be warmed based on prediction
-		if pattern.NextPrediction.Before(now) && pattern.Confidence > 0.5 {
-			predictions = append(predictions, fingerprint)
+	// Keep only recent access times
+	cutoff := now.Add(-apa.config.WarmingLookback)
+	var recentTimes []time.Time
+	for _, t := range pattern.AccessTimes {
+		if t.After(cutoff) {
+			recentTimes = append(recentTimes, t)
 		}
 	}
+	pattern.AccessTimes = recentTimes
+
+	// Update frequency
+	if len(pattern.AccessTimes) > 1 {
+		pattern.Frequency = float64(len(pattern.AccessTimes)) / apa.config.WarmingLookback.Seconds()
+	}
+}
+
+// AnalyzePatterns analyzes access patterns
+func (apa *AccessPatternAnalyzer) AnalyzePatterns() {
+	apa.mutex.Lock()
+	defer apa.mutex.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-apa.config.WarmingLookback)
+
+	// Clean up old patterns
+	for fp, pattern := range apa.patterns {
+		if pattern.LastAccess.Before(cutoff) {
+			delete(apa.patterns, fp)
+		}
+	}
+
+	// Analyze correlations
+	for fp1, pattern1 := range apa.patterns {
+		if pattern1.AccessCount < apa.config.MinAccessCount {
+			continue
+		}
+
+		for fp2, pattern2 := range apa.patterns {
+			if fp1 == fp2 {
+				continue
+			}
+
+			if pattern2.AccessCount < apa.config.MinAccessCount {
+				continue
+			}
+
+			// Calculate correlation
+			correlation := apa.calculateCorrelation(pattern1, pattern2)
+			if correlation > apa.config.ConfidenceThreshold {
+				pattern1.RelatedChunks[fp2] = correlation
+			}
+		}
+
+		// Calculate predictability
+		pattern1.Predictability = apa.calculatePredictability(pattern1)
+	}
+}
+
+// calculateCorrelation calculates correlation between two patterns
+func (apa *AccessPatternAnalyzer) calculateCorrelation(p1, p2 *AccessPattern) float64 {
+	if len(p1.AccessTimes) < 2 || len(p2.AccessTimes) < 2 {
+		return 0
+	}
+
+	// Simple time-based correlation
+	// Count accesses within time windows
+	windowSize := 1 * time.Minute
+	correlation := 0.0
+	totalWindows := 0
+
+	start := time.Now().Add(-apa.config.WarmingLookback)
+	for t := start; t.Before(time.Now()); t = t.Add(windowSize) {
+		end := t.Add(windowSize)
+
+		count1 := apa.countAccessesInWindow(p1.AccessTimes, t, end)
+		count2 := apa.countAccessesInWindow(p2.AccessTimes, t, end)
+
+		if count1 > 0 && count2 > 0 {
+			correlation += 1.0
+		}
+		totalWindows++
+	}
+
+	if totalWindows > 0 {
+		return correlation / float64(totalWindows)
+	}
+	return 0
+}
+
+// countAccessesInWindow counts accesses in a time window
+func (apa *AccessPatternAnalyzer) countAccessesInWindow(times []time.Time, start, end time.Time) int {
+	count := 0
+	for _, t := range times {
+		if t.After(start) && t.Before(end) {
+			count++
+		}
+	}
+	return count
+}
+
+// calculatePredictability calculates how predictable a pattern is
+func (apa *AccessPatternAnalyzer) calculatePredictability(pattern *AccessPattern) float64 {
+	if len(pattern.AccessTimes) < 2 {
+		return 0
+	}
+
+	// Calculate time intervals between accesses
+	var intervals []float64
+	for i := 1; i < len(pattern.AccessTimes); i++ {
+		interval := pattern.AccessTimes[i].Sub(pattern.AccessTimes[i-1]).Seconds()
+		intervals = append(intervals, interval)
+	}
+
+	// Calculate coefficient of variation (lower = more predictable)
+	if len(intervals) == 0 {
+		return 0
+	}
+
+	mean := 0.0
+	for _, interval := range intervals {
+		mean += interval
+	}
+	mean /= float64(len(intervals))
+
+	variance := 0.0
+	for _, interval := range intervals {
+		variance += math.Pow(interval-mean, 2)
+	}
+	variance /= float64(len(intervals))
+
+	if mean == 0 {
+		return 0
+	}
+
+	cv := math.Sqrt(variance) / mean
+	// Convert to predictability (0-1, higher is more predictable)
+	return math.Max(0, 1-cv)
+}
+
+// NewChunkPredictor creates a new chunk predictor
+func NewChunkPredictor(patterns *AccessPatternAnalyzer, config *IntelligentCacheConfig) *ChunkPredictor {
+	return &ChunkPredictor{
+		patterns:    patterns,
+		config:      config,
+		predictions: make(map[string]*Prediction),
+	}
+}
+
+// PredictRelatedChunks predicts which chunks will be accessed next
+func (cp *ChunkPredictor) PredictRelatedChunks(fingerprint string) []*Prediction {
+	cp.mutex.RLock()
+	defer cp.mutex.RUnlock()
+
+	cp.patterns.mutex.RLock()
+	pattern, exists := cp.patterns.patterns[fingerprint]
+	cp.patterns.mutex.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	var predictions []*Prediction
+	now := time.Now()
+
+	for relatedFp, correlation := range pattern.RelatedChunks {
+		confidence := correlation * pattern.Predictability
+		if confidence >= cp.config.ConfidenceThreshold {
+			predictions = append(predictions, &Prediction{
+				Fingerprint: relatedFp,
+				Confidence:  confidence,
+				Reason:      fmt.Sprintf("correlated with %s (%.2f)", fingerprint, correlation),
+				Timestamp:   now,
+				ExpiresAt:   now.Add(cp.config.PredictionWindow),
+			})
+		}
+	}
+
+	// Sort by confidence
+	sort.Slice(predictions, func(i, j int) bool {
+		return predictions[i].Confidence > predictions[j].Confidence
+	})
 
 	return predictions
 }
 
-// warmChunks warms the cache with predicted chunks
-func (cwe *CacheWarmingEngine) warmChunks(ctx context.Context, fingerprints []string, localStore, centralDB, cache interface{}) {
-	// Limit batch size
-	if len(fingerprints) > cwe.config.WarmingBatchSize {
-		fingerprints = fingerprints[:cwe.config.WarmingBatchSize]
-	}
+// UpdatePredictions updates predictions
+func (cp *ChunkPredictor) UpdatePredictions() {
+	cp.mutex.Lock()
+	defer cp.mutex.Unlock()
 
-	// Process in batches
-	for i := 0; i < len(fingerprints); i += cwe.config.WarmingBatchSize {
-		end := i + cwe.config.WarmingBatchSize
-		if end > len(fingerprints) {
-			end = len(fingerprints)
+	now := time.Now()
+
+	// Clean up expired predictions
+	for fp, prediction := range cp.predictions {
+		if now.After(prediction.ExpiresAt) {
+			delete(cp.predictions, fp)
 		}
+	}
+}
 
-		batch := fingerprints[i:end]
+// NewWarmingQueue creates a new warming queue
+func NewWarmingQueue(capacity int) *WarmingQueue {
+	return &WarmingQueue{
+		items:    make([]WarmingItem, 0, capacity),
+		capacity: capacity,
+	}
+}
 
-		// Acquire worker slot
-		select {
-		case cwe.workerPool <- struct{}{}:
-			go func(batchFingerprints []string) {
-				defer func() { <-cwe.workerPool }()
-				cwe.warmBatch(ctx, batchFingerprints, localStore, centralDB, cache)
-			}(batch)
-		case <-ctx.Done():
+// Add adds an item to the warming queue
+func (wq *WarmingQueue) Add(item WarmingItem) {
+	wq.mutex.Lock()
+	defer wq.mutex.Unlock()
+
+	// Check if already in queue
+	for i, existing := range wq.items {
+		if existing.Fingerprint == item.Fingerprint {
+			// Update priority if new item has higher priority
+			if item.Priority > existing.Priority {
+				wq.items[i] = item
+			}
 			return
-		default:
-			// No workers available, process synchronously
-			cwe.warmBatch(ctx, batch, localStore, centralDB, cache)
+		}
+	}
+
+	// Add new item
+	if len(wq.items) < wq.capacity {
+		wq.items = append(wq.items, item)
+	} else {
+		// Replace lowest priority item
+		lowestIndex := 0
+		lowestPriority := wq.items[0].Priority
+		for i, existing := range wq.items {
+			if existing.Priority < lowestPriority {
+				lowestPriority = existing.Priority
+				lowestIndex = i
+			}
+		}
+		if item.Priority > lowestPriority {
+			wq.items[lowestIndex] = item
 		}
 	}
 }
 
-// warmBatch warms a batch of chunks
-func (cwe *CacheWarmingEngine) warmBatch(ctx context.Context, fingerprints []string, localStore, centralDB, cache interface{}) {
-	// This is a simplified implementation
-	// In a real system, you would:
-	// 1. Check local store first
-	// 2. Check central DB if not found locally
-	// 3. Add to cache if found
+// GetItems returns all items in the queue
+func (wq *WarmingQueue) GetItems() []WarmingItem {
+	wq.mutex.Lock()
+	defer wq.mutex.Unlock()
 
-	log.Printf("Warming %d chunks in batch", len(fingerprints))
-
-	// Simulate warming delay
-	time.Sleep(100 * time.Millisecond)
-
-	// Update stats (in a real implementation)
-	// ic.stats.WarmedChunks += int64(len(fingerprints))
-}
-
-// GetStats returns intelligent cache statistics
-func (ic *IntelligentCache) GetStats() *IntelligentCacheStats {
-	ic.mutex.RLock()
-	defer ic.mutex.RUnlock()
-
-	stats := *ic.stats // Copy to avoid race conditions
-	return &stats
-}
-
-// GetHitRate returns the current hit rate
-func (ic *IntelligentCache) GetHitRate() float64 {
-	stats := ic.GetStats()
-	totalRequests := stats.PredictiveHits + 1
-	if totalRequests == 0 {
-		return 0
-	}
-	return float64(stats.PredictiveHits) / float64(totalRequests) * 100
-}
-
-// Cleanup removes old patterns
-func (ic *IntelligentCache) Cleanup() {
-	ic.accessPatterns.cleanup()
-}
-
-// cleanup removes old access patterns
-func (apa *AccessPatternAnalyzer) cleanup() {
-	apa.mutex.Lock()
-	defer apa.mutex.Unlock()
-
-	cutoff := time.Now().Add(-apa.window)
-
-	for fingerprint, pattern := range apa.patterns {
-		if pattern.LastAccess.Before(cutoff) {
-			delete(apa.patterns, fingerprint)
-		}
-	}
+	items := make([]WarmingItem, len(wq.items))
+	copy(items, wq.items)
+	return items
 }

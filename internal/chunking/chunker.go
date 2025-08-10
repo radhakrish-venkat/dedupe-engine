@@ -107,7 +107,7 @@ func (c *Chunker) isBoundary(data []byte) bool {
 		{0xFF, 0xFF, 0xFF, 0xFF}, // All ones
 		{0x0A, 0x0A, 0x0A, 0x0A}, // Newlines
 	} {
-		if bytesEqual(lastBytes, pattern) {
+		if bytesEqualChunker(lastBytes, pattern) {
 			return true
 		}
 	}
@@ -165,8 +165,8 @@ func (c *Chunker) ChunkFile(reader io.Reader) ([]Chunk, error) {
 	return chunks, nil
 }
 
-// bytesEqual compares two byte slices for equality
-func bytesEqual(a, b []byte) bool {
+// bytesEqualChunker compares two byte slices for equality
+func bytesEqualChunker(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
 	}
