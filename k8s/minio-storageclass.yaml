@@ -3,7 +3,7 @@ kind: StorageClass
 metadata:
   name: minio-storage
   namespace: dedupe-engine
-provisioner: k8s.io/minikube-hostpath
+provisioner: rancher.io/local-path
 reclaimPolicy: Retain
 volumeBindingMode: Immediate
 allowVolumeExpansion: true

@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dedupe-config
+  namespace: dedupe-engine
+  labels:
+    app: hybrid-dedupe-ingest
+data:
+  # Hybrid dedupe configuration
+  config.yaml: |
+    dedupe:
+      # Hot cache configuration
+      hot_cache:
+        size: 50000
+        filter_capacity: 500000
+      
+      # RocksDB configuration
+      rocksdb:
+        path: "/data/dedupe/local"
+        cache_size: "8Gi"
+        compression: "snappy"
+        write_buffer_size: "64Mi"
+        max_write_buffer_number: 4
+        target_file_size_base: "64Mi"
+        max_bytes_for_level_base: "256Mi"
+        level0_file_num_compaction_trigger: 4
+        level0_slowdown_writes_trigger: 12
+        level0_stop_writes_trigger: 20
+      
+      # Central database configuration
+      central_db:
+        enabled: true
+        sync_enabled: true
+        batch_size: 5000
+        connection_pool_size: 10
+        max_retries: 3
+        retry_delay: "1s"
+      
+      # Performance tuning
+      performance:
+        max_concurrent_requests: 1000
+        request_timeout: "30s"
+        background_compaction_interval: "1h"
+        stats_logging_interval: "5m"
+      
+      # Monitoring configuration
+      monitoring:
+        metrics_enabled: true
+        health_check_enabled: true
+        prometheus_endpoint: ":8080"
+        health_endpoint: ":8081"
+  
+  # Logging configuration
+  logging.yaml: |
+    level: info
+    format: json
+    output: stdout
+    fields:
+      service: hybrid-dedupe-ingest
+      version: v1.0.0
+    
+    # Structured logging
+    structured: true
+    timestamp: true
+    
+    # Log rotation
+    rotation:
+      max_size: 100MB
+      max_age: 7d
+      max_backups: 10
+      compress: true
+  
+  # Metrics configuration
+  metrics.yaml: |
+    prometheus:
+      enabled: true
+      port: 8080
+      path: /metrics
+      collect_interval: 15s
+    
+    # Custom metrics
+    custom_metrics:
+      - name: dedupe_hit_rate
+        type: gauge
+        description: "Deduplication hit rate percentage"
+        labels: ["cache_layer"]
+      
+      - name: dedupe_requests_total
+        type: counter
+        description: "Total deduplication requests"
+        labels: ["cache_layer", "result"]
+      
+      - name: dedupe_latency_seconds
+        type: histogram
+        description: "Deduplication request latency"
+        labels: ["cache_layer"]
+        buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+      
+      - name: rocksdb_size_bytes
+        type: gauge
+        description: "RocksDB storage size in bytes"
+      
+      - name: hot_cache_size
+        type: gauge
+        description: "Hot cache current size"
+  
+  # Health check configuration
+  health.yaml: |
+    health:
+      enabled: true
+      port: 8081
+      path: /health
+      readiness_path: /ready
+      startup_path: /startup
+      
+      # Health check intervals
+      check_interval: 30s
+      timeout: 5s
+      
+      # Dependencies to check
+      dependencies:
+        - name: rocksdb
+          type: internal
+          timeout: 2s
+        
+        - name: central_db
+          type: external
+          endpoint: "cockroachdb-service:26257"
+          timeout: 5s
+        
+        - name: storage_service
+          type: external
+          endpoint: "data-storage-service:50052"
+          timeout: 3s

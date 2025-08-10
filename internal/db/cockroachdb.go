@@ -80,6 +80,19 @@ func (db *DB) CreateBackupJob(ctx context.Context, job *BackupJob) error {
 	return err
 }
 
+func (db *DB) GetBackupJob(ctx context.Context, jobID string) (*BackupJob, error) {
+	row := db.conn.QueryRowContext(ctx, `SELECT job_id, client_id, backup_policy_id, start_time, end_time, status, source_type, source_details, files_metadata FROM backup_jobs WHERE job_id = $1`, jobID)
+	var job BackupJob
+	err := row.Scan(&job.JobID, &job.ClientID, &job.BackupPolicyID, &job.StartTime, &job.EndTime, &job.Status, &job.SourceType, &job.SourceDetails, &job.FilesMetadata)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
 func (db *DB) UpdateBackupJobStatus(ctx context.Context, jobID, status string, endTime *time.Time) error {
 	_, err := db.conn.ExecContext(ctx, `UPDATE backup_jobs SET status = $2, end_time = $3 WHERE job_id = $1`, jobID, status, endTime)
 	return err
@@ -90,6 +103,45 @@ func (db *DB) AddFileMetadataToJob(ctx context.Context, jobID string, filesMeta 
 	return err
 }
 
+// --- Restore Operations ---
+func (db *DB) GetChunksForBackupJob(ctx context.Context, jobID string) ([]string, error) {
+	rows, err := db.conn.QueryContext(ctx, `SELECT DISTINCT chunk_fingerprint FROM backup_chunks WHERE backup_job_id = $1 ORDER BY chunk_fingerprint`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var fingerprints []string
+	for rows.Next() {
+		var fingerprint string
+		if err := rows.Scan(&fingerprint); err != nil {
+			return nil, err
+		}
+		fingerprints = append(fingerprints, fingerprint)
+	}
+	return fingerprints, nil
+}
+
+func (db *DB) GetFileMetadataForBackupJob(ctx context.Context, jobID string) (map[string]FileMetadata, error) {
+	rows, err := db.conn.QueryContext(ctx, `SELECT file_path, file_size, chunk_fingerprints FROM backup_files WHERE backup_job_id = $1`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	files := make(map[string]FileMetadata)
+	for rows.Next() {
+		var file FileMetadata
+		var chunkFingerprints string // JSON array of fingerprints
+		if err := rows.Scan(&file.FilePath, &file.FileSize, &chunkFingerprints); err != nil {
+			return nil, err
+		}
+		// TODO: Parse chunkFingerprints JSON into file.ChunkFingerprints
+		files[file.FilePath] = file
+	}
+	return files, nil
+}
+
 // --- Data Types ---
 type ChunkMetadata struct {
 	Fingerprint        string
@@ -97,6 +149,12 @@ type ChunkMetadata struct {
 	Size               int
 	CreationTime       time.Time
 	LastReferencedTime time.Time
+}
+
+type FileMetadata struct {
+	FilePath          string
+	FileSize          int64
+	ChunkFingerprints []string
 }
 
 type BackupJob struct {

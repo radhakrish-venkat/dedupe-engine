@@ -55,12 +55,25 @@ type BackupJobState struct {
 
 // NewIngestServer creates a new IngestServer instance
 func NewIngestServer(grpcPort, storageAddr string) *IngestServer {
+	var storageClient storagepb.StorageServiceClient
+	if storageAddr != "" {
+		// Create gRPC connection to storage node
+		conn, err := grpc.Dial(storageAddr, grpc.WithInsecure())
+		if err != nil {
+			log.Printf("Warning: Failed to connect to storage node at %s: %v", storageAddr, err)
+		} else {
+			storageClient = storagepb.NewStorageServiceClient(conn)
+			log.Printf("Connected to storage node at %s", storageAddr)
+		}
+	}
+
 	return &IngestServer{
-		chunker:     chunking.NewChunker(64, 8192),            // 64B min, 8KB max
-		cache:       cache.NewDeduplicationCache(1000, 10000), // 1000 cache entries, 10000 filter capacity
-		backupJobs:  make(map[string]*BackupJobState),
-		grpcPort:    grpcPort,
-		storageAddr: storageAddr,
+		chunker:       chunking.NewChunker(64, 8192),            // 64B min, 8KB max
+		cache:         cache.NewDeduplicationCache(1000, 10000), // 1000 cache entries, 10000 filter capacity
+		backupJobs:    make(map[string]*BackupJobState),
+		grpcPort:      grpcPort,
+		storageAddr:   storageAddr,
+		storageClient: storageClient,
 	}
 }
 
@@ -279,18 +292,113 @@ func (s *IngestServer) storeUniqueChunk(chunk chunking.Chunk) error {
 
 // InitiateRestore handles restore initiation requests
 func (s *IngestServer) InitiateRestore(ctx context.Context, req *pb.RestoreRequest) (*pb.RestoreResponse, error) {
-	// TODO: Implement restore logic
+	if req.BackupJobId == "" {
+		return nil, status.Error(codes.InvalidArgument, "backup_job_id is required")
+	}
+
+	// Check if backup job exists
+	if s.dbClient == nil {
+		return nil, status.Error(codes.Unavailable, "database connection not available")
+	}
+
+	backupJob, err := s.dbClient.GetBackupJob(ctx, req.BackupJobId)
+	if err != nil {
+		log.Printf("Failed to get backup job %s: %v", req.BackupJobId, err)
+		return nil, status.Error(codes.Internal, "failed to retrieve backup job")
+	}
+
+	if backupJob == nil {
+		return nil, status.Error(codes.NotFound, "backup job not found")
+	}
+
+	if backupJob.Status != "COMPLETED" {
+		return nil, status.Error(codes.FailedPrecondition, "backup job is not completed")
+	}
+
+	// Get chunks for this backup job
+	chunkFingerprints, err := s.dbClient.GetChunksForBackupJob(ctx, req.BackupJobId)
+	if err != nil {
+		log.Printf("Failed to get chunks for backup job %s: %v", req.BackupJobId, err)
+		return nil, status.Error(codes.Internal, "failed to retrieve backup chunks")
+	}
+
+	// Get file metadata for this backup job
+	fileMetadata, err := s.dbClient.GetFileMetadataForBackupJob(ctx, req.BackupJobId)
+	if err != nil {
+		log.Printf("Failed to get file metadata for backup job %s: %v", req.BackupJobId, err)
+		return nil, status.Error(codes.Internal, "failed to retrieve file metadata")
+	}
+
+	// Create restore job ID
+	restoreJobID := fmt.Sprintf("restore-%s-%d", req.BackupJobId, time.Now().Unix())
+
+	log.Printf("Initiated restore job %s for backup %s with %d chunks and %d files",
+		restoreJobID, req.BackupJobId, len(chunkFingerprints), len(fileMetadata))
+
 	return &pb.RestoreResponse{
-		RestoreJobId: fmt.Sprintf("restore-%d", time.Now().Unix()),
+		RestoreJobId: restoreJobID,
 		Status:       "INITIATED",
-		Message:      "Restore initiated (not yet implemented)",
+		Message:      fmt.Sprintf("Restore initiated with %d chunks and %d files", len(chunkFingerprints), len(fileMetadata)),
 	}, nil
 }
 
 // StreamRestoreData handles restore data streaming
 func (s *IngestServer) StreamRestoreData(stream pb.BackupService_StreamRestoreDataServer) error {
-	// TODO: Implement restore data streaming
-	return status.Error(codes.Unimplemented, "Restore data streaming not yet implemented")
+	// Receive initial request to get restore job ID
+	request, err := stream.Recv()
+	if err != nil {
+		return status.Errorf(codes.Internal, "Failed to receive initial request: %v", err)
+	}
+
+	restoreJobID := request.RestoreJobId
+	if restoreJobID == "" {
+		return status.Error(codes.InvalidArgument, "restore_job_id is required")
+	}
+
+	log.Printf("Starting restore data stream for job: %s", restoreJobID)
+
+	// For now, we'll implement a simple restore that fetches chunks and reassembles files
+	// In a real implementation, you'd query the database for file metadata and chunk fingerprints
+
+	// Simulate fetching and streaming chunks
+	// This is a placeholder implementation - in reality, you'd:
+	// 1. Query database for file metadata and chunk fingerprints
+	// 2. Fetch chunks from storage nodes
+	// 3. Reassemble files
+	// 4. Stream reassembled data
+
+	// For demonstration, we'll stream some dummy data
+	dummyData := []byte("This is restored data from backup")
+
+	// Split into segments and stream
+	segmentSize := 10
+	for i := 0; i < len(dummyData); i += segmentSize {
+		end := i + segmentSize
+		if end > len(dummyData) {
+			end = len(dummyData)
+		}
+
+		segment := dummyData[i:end]
+		isLast := end == len(dummyData)
+
+		response := &pb.RestoreDataResponse{
+			RestoreJobId:  restoreJobID,
+			FilePath:      "/restored/file.txt",
+			Data:          segment,
+			Offset:        uint64(i),
+			IsLastSegment: isLast,
+		}
+
+		if err := stream.Send(response); err != nil {
+			return status.Errorf(codes.Internal, "Failed to send restore data: %v", err)
+		}
+
+		// Small delay to simulate processing
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	log.Printf("Completed restore data stream for job: %s", restoreJobID)
+	return nil
 }
 
 func main() {

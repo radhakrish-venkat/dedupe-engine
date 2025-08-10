@@ -1,0 +1,99 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hybrid-dedupe-hpa
+  namespace: dedupe-engine
+  labels:
+    app: hybrid-dedupe-ingest
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hybrid-dedupe-ingest
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom metric for deduplication load
+  - type: Object
+    object:
+      metric:
+        name: dedupe_requests_per_second
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: hybrid-dedupe-service
+      target:
+        type: AverageValue
+        averageValue: 1000
+  # Custom metric for hit rate
+  - type: Object
+    object:
+      metric:
+        name: dedupe_hit_rate
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: hybrid-dedupe-service
+      target:
+        type: AverageValue
+        averageValue: 85
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+---
+# Vertical Pod Autoscaler for resource optimization
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: hybrid-dedupe-vpa
+  namespace: dedupe-engine
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hybrid-dedupe-ingest
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: '*'
+      minAllowed:
+        cpu: 1
+        memory: 4Gi
+      maxAllowed:
+        cpu: 8
+        memory: 32Gi
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits

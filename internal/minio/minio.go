@@ -89,3 +89,12 @@ func (c *Client) GetChunkSize(ctx context.Context, fingerprint string) (int64, e
 	}
 	return info.Size, nil
 }
+
+// DeleteChunk deletes a chunk from MinIO
+func (c *Client) DeleteChunk(ctx context.Context, fingerprint string) error {
+	err := c.client.RemoveObject(ctx, c.bucket, fingerprint, minio.RemoveObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete chunk %s: %w", fingerprint, err)
+	}
+	return nil
+}

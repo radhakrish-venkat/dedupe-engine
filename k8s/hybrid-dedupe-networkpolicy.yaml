@@ -1,0 +1,113 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hybrid-dedupe-network-policy
+  namespace: dedupe-engine
+  labels:
+    app: hybrid-dedupe-ingest
+spec:
+  podSelector:
+    matchLabels:
+      app: hybrid-dedupe-ingest
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow gRPC traffic from stream handlers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: dedupe-engine
+    - podSelector:
+        matchLabels:
+          app: stream-handler
+    ports:
+    - protocol: TCP
+      port: 50051
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow health checks from kubelet
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8081
+  egress:
+  # Allow outbound to CockroachDB
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: dedupe-engine
+    - podSelector:
+        matchLabels:
+          app: cockroachdb
+    ports:
+    - protocol: TCP
+      port: 26257
+  # Allow outbound to data storage service
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: dedupe-engine
+    - podSelector:
+        matchLabels:
+          app: data-storage-node
+    ports:
+    - protocol: TCP
+      port: 50052
+  # Allow outbound to MinIO
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: dedupe-engine
+    - podSelector:
+        matchLabels:
+          app: minio
+    ports:
+    - protocol: TCP
+      port: 9000
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow NTP for time synchronization
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 123
+---
+# Network policy for internal communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hybrid-dedupe-internal-policy
+  namespace: dedupe-engine
+spec:
+  podSelector:
+    matchLabels:
+      app: hybrid-dedupe-ingest
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow internal service communication
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: dedupe-engine
+    ports:
+    - protocol: TCP
+      port: 50051
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8081

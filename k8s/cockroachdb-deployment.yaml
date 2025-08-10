@@ -64,7 +64,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: minio-storage
+  storageClassName: hostpath
   resources:
     requests:
       storage: 5Gi 

@@ -1,0 +1,208 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hybrid-dedupe-ingest
+  namespace: dedupe-engine
+  labels:
+    app: hybrid-dedupe-ingest
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: hybrid-dedupe-ingest
+  template:
+    metadata:
+      labels:
+        app: hybrid-dedupe-ingest
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Use StatefulSet for persistent storage
+      serviceAccountName: dedupe-engine-sa
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: hybrid-dedupe-ingest
+        image: dedupe-engine:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50051
+          protocol: TCP
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        env:
+        # Hybrid dedupe configuration
+        - name: HOT_CACHE_SIZE
+          value: "50000"
+        - name: ROCKSDB_PATH
+          value: "/data/dedupe/local"
+        - name: ENABLE_CENTRAL_DB
+          value: "true"
+        - name: SYNC_TO_CENTRAL_DB
+          value: "true"
+        - name: BATCH_SIZE
+          value: "5000"
+        
+        # Service configuration
+        - name: GRPC_PORT
+          value: "50051"
+        - name: METRICS_PORT
+          value: "8080"
+        - name: HEALTH_PORT
+          value: "8081"
+        
+        # Database configuration
+        - name: COCKROACHDB_ADDR
+          value: "cockroachdb-service:26257"
+        - name: COCKROACHDB_DATABASE
+          value: "dedupe_engine"
+        - name: COCKROACHDB_USER
+          value: "root"
+        - name: COCKROACHDB_SSL_MODE
+          value: "disable"
+        
+        # Storage configuration
+        - name: STORAGE_NODE_ADDR
+          value: "data-storage-service:50052"
+        - name: MINIO_ENDPOINT
+          value: "minio-service:9000"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-secret
+              key: access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-secret
+              key: secret-key
+        - name: MINIO_BUCKET
+          value: "dedupe-chunks"
+        - name: MINIO_USE_SSL
+          value: "false"
+        
+        # Performance tuning
+        - name: GOMAXPROCS
+          value: "4"
+        - name: GOGC
+          value: "100"
+        
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "2"
+            ephemeral-storage: "10Gi"
+          limits:
+            memory: "16Gi"
+            cpu: "4"
+            ephemeral-storage: "20Gi"
+        
+        volumeMounts:
+        - name: dedupe-storage
+          mountPath: /data/dedupe
+          subPath: "rocksdb"
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Init container to prepare storage
+      initContainers:
+      - name: init-storage
+        image: busybox:1.35
+        command: ['sh', '-c', 'mkdir -p /data/dedupe/rocksdb && chown -R 1000:1000 /data/dedupe']
+        volumeMounts:
+        - name: dedupe-storage
+          mountPath: /data/dedupe
+        securityContext:
+          runAsUser: 0
+      
+      volumes:
+      - name: dedupe-storage
+        persistentVolumeClaim:
+          claimName: dedupe-pvc
+      - name: config-volume
+        configMap:
+          name: dedupe-config
+      
+      # Node affinity for better performance
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/os
+                operator: In
+                values:
+                - linux
+              - key: node-role.kubernetes.io/worker
+                operator: Exists
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - hybrid-dedupe-ingest
+              topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for dedicated nodes
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "dedupe-engine"
+        effect: "NoSchedule"
